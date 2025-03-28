@@ -1,0 +1,708 @@
+import streamlit as st
+import xmltodict
+
+# Function to return a mock XML response
+def get_mock_xml():
+    return """<Runs xmlns="http://www.hp.com/PC/REST/API">
+    <Run>
+        <TestID>14699</TestID>
+        <TestInstanceID>3568</TestInstanceID>
+        <PostRunAction>Collate Results</PostRunAction>
+        <TimeslotID>10992</TimeslotID>
+        <VudsMode>false</VudsMode>
+        <ID>18479</ID>
+        <Duration>13</Duration>
+        <RunState>Before Creating Analysis Data</RunState>
+        <RunSLAStatus>Not Completed</RunSLAStatus>
+    </Run>
+    <Run>
+        <TestID>13316</TestID>
+        <TestInstanceID>3192</TestInstanceID>
+        <PostRunAction>Collate Results</PostRunAction>
+        <TimeslotID>10991</TimeslotID>
+        <VudsMode>false</VudsMode>
+        <ID>14780</ID>
+        <Duration>10</Duration>
+        <RunState>Before Creating Analysis Data</RunState>
+        <RunSLAStatus>Not Completed</RunSLAStatus>
+    </Run>
+    <Run>
+        <TestID>15001</TestID>
+        <TestInstanceID>4000</TestInstanceID>
+        <PostRunAction>Collate Results</PostRunAction>
+        <TimeslotID>11000</TimeslotID>
+        <VudsMode>false</VudsMode>
+        <ID>20000</ID>
+        <Duration>15</Duration>
+        <RunState>Completed</RunState>
+        <RunSLAStatus>Completed</RunSLAStatus>
+    </Run>
+</Runs>"""
+
+# Function to extract and filter data
+def extract_filtered_data(xml_data):
+    data_dict = xmltodict.parse(xml_data)
+    
+    # Ensure proper structure
+    runs = data_dict.get("Runs", {}).get("Run", [])
+    if not isinstance(runs, list):
+        runs = [runs]  # Convert to list if single entry
+    
+    # Extract and filter
+    results = [
+        {
+            "TestID": run["TestID"], 
+            "ID": run["ID"], 
+            "DisplayText": f"{run['TestID']} - {run['ID']}"
+        }
+        for run in runs
+        if int(run["ID"]) > 15000
+    ]
+    
+    return results
+
+# Streamlit UI
+st.title("Mock API Response Parser with Dropdown")
+
+# Get mock XML data
+xml_data = get_mock_xml()
+st.text_area("Mock XML Response", xml_data, height=300)
+
+# Extract and filter results
+filtered_results = extract_filtered_data(xml_data)
+
+# Populate dropdown if results exist
+if filtered_results:
+    dropdown_options = {entry["DisplayText"]: entry["ID"] for entry in filtered_results}
+    selected_id = st.selectbox("Select TestID - ID:", options=list(dropdown_options.keys()))
+    
+    st.write(f"**Selected ID:** {dropdown_options[selected_id]}")
+else:
+    st.write("No IDs greater than 15000 found.")
+
+
+
+
+
+=============
+
+
+import requests
+import xml.etree.ElementTree as ET
+import sqlite3
+import csv
+
+# API URLs (replace placeholders with actual values)
+API_BASE_URL = "http://your-api-url/LoadTest/rest/domains/TRUST/projects/TRUST_PerformanceTestProjects"
+
+# XML File containing test data (replace with actual file)
+XML_FILE_PATH = "tests.xml"
+
+# SQLite Database
+DB_FILE = "test_results.db"
+
+def parse_xml(file_path):
+    """Parse XML and extract Test IDs."""
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+    tests = []
+
+    for run in root.findall("Run"):
+        test_id = run.find("TestID").text
+        tests.append(test_id)
+
+    return tests
+
+def fetch_test_details(test_id):
+    """Fetch test details (start time, end time, test name) using APIs."""
+    # API Call 1: Get Start Time & End Time
+    url1 = f"{API_BASE_URL}/Runs/{test_id}/Extended"
+    response1 = requests.get(url1)
+    
+    if response1.status_code == 200:
+        xml_data1 = ET.fromstring(response1.text)
+        start_time = xml_data1.find("StartTime").text
+        end_time = xml_data1.find("EndTime").text
+    else:
+        start_time, end_time = "N/A", "N/A"
+
+    # API Call 2: Get Test Name
+    url2 = f"{API_BASE_URL}/tests?query={{ID[{test_id}]}}"
+    response2 = requests.get(url2)
+    
+    if response2.status_code == 200:
+        xml_data2 = ET.fromstring(response2.text)
+        test_name = xml_data2.find("Name").text
+    else:
+        test_name = "N/A"
+
+    return test_id, start_time, end_time, test_name
+
+def create_database():
+    """Create SQLite database and table if not exists."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS TestResults (
+            TestID TEXT PRIMARY KEY,
+            StartTime TEXT,
+            EndTime TEXT,
+            TestName TEXT
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def save_to_database(results):
+    """Save test results into SQLite."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    for result in results:
+        cursor.execute('''
+            INSERT INTO TestResults (TestID, StartTime, EndTime, TestName) 
+            VALUES (?, ?, ?, ?)
+        ''', result)
+    
+    conn.commit()
+    conn.close()
+
+def export_to_csv(results, file_name="test_results.csv"):
+    """Export test results to CSV."""
+    headers = ["TestID", "StartTime", "EndTime", "TestName"]
+
+    with open(file_name, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(headers)
+        writer.writerows(results)
+
+def main():
+    """Main function to execute the workflow."""
+    create_database()
+
+    test_ids = parse_xml(XML_FILE_PATH)
+    results = []
+
+    for test_id in test_ids:
+        result = fetch_test_details(test_id)
+        results.append(result)
+
+    save_to_database(results)
+    export_to_csv(results)
+    print("Process completed! Data saved to SQLite and CSV.")
+
+if __name__ == "__main__":
+    main()
+
+
+==========
+
+
+import streamlit as st
+import xml.etree.ElementTree as ET
+
+
+def get_mock_test_runs():
+    """Generates mock test run data in XML format."""
+    root = ET.Element("Runs", xmlns="http://www.hp.com/PC/REST/API")
+
+    test_runs = [
+        {"TestID": "14699", "TestInstanceID": "3568", "TimeslotID": "10992", "ID": "18479", "RunState": "Initializing",
+         "RunSLAStatus": "Not Completed", "StartTime": "2025-03-10 10:15:34", "EndTime": "2025-03-10 10:45:34",
+         "MaxVusers": "20", "TotalPassedTransactions": "5000", "TotalFailedTransactions": "10", "TotalErrors": "2",
+         "AverageHitsPerSecond": "5", "AverageThroughputPerSecond": "200"},
+
+        {"TestID": "13316", "TestInstanceID": "3192", "TimeslotID": "10990", "ID": "18478", "RunState": "Initializing",
+         "RunSLAStatus": "Completed", "StartTime": "2025-03-11 09:30:22", "EndTime": "2025-03-11 10:00:22",
+         "MaxVusers": "15", "TotalPassedTransactions": "4500", "TotalFailedTransactions": "5", "TotalErrors": "1",
+         "AverageHitsPerSecond": "4.5", "AverageThroughputPerSecond": "180"},
+
+        {"TestID": "17820", "TestInstanceID": "4021", "TimeslotID": "11005", "ID": "18501", "RunState": "Running",
+         "RunSLAStatus": "In Progress", "StartTime": "2025-03-12 08:00:00", "EndTime": "2025-03-12 08:30:00",
+         "MaxVusers": "25", "TotalPassedTransactions": "6000", "TotalFailedTransactions": "20", "TotalErrors": "5",
+         "AverageHitsPerSecond": "6.2", "AverageThroughputPerSecond": "220"}
+    ]
+
+    for run in test_runs:
+        run_elem = ET.SubElement(root, "Run")
+        ET.SubElement(run_elem, "PostRunAction").text = "Collate And Analyze"
+        for key, value in run.items():
+            ET.SubElement(run_elem, key).text = value
+
+    return ET.tostring(root, encoding="unicode")
+
+
+def get_mock_tests():
+    """Generates mock test metadata in XML format."""
+    root = ET.Element("Tests", xmlns="http://www.hp.com/PC/REST/API")
+
+    test_data = [
+        {"ID": "176", "Name": "e2e_test", "CreatedBy": "auto_user_yeqxdjbasrk",
+         "LastModified": "2024-05-14 11:56:34", "TestFolderPath": "Subject/e2e_13-05-2024/level2/level3/level4"},
+
+        {"ID": "177", "Name": "performance_test", "CreatedBy": "auto_user_abcd1234",
+         "LastModified": "2024-05-15 10:30:00", "TestFolderPath": "Subject/perf_tests/level1/level2"},
+
+        {"ID": "178", "Name": "load_test", "CreatedBy": "test_user_xyz",
+         "LastModified": "2024-05-16 09:45:22", "TestFolderPath": "Subject/load_testing/scenarios"}
+    ]
+
+    for test in test_data:
+        test_elem = ET.SubElement(root, "Test")
+        for key, value in test.items():
+            ET.SubElement(test_elem, key).text = value
+
+    return ET.tostring(root, encoding="unicode")
+
+
+# Streamlit UI to interact with the mock API functions
+st.title("Mock XML Data Generator")
+
+if st.button("Get Mock Test Runs"):
+    st.code(get_mock_test_runs(), language="xml")
+
+if st.button("Get Mock Tests"):
+    st.code(get_mock_tests(), language="xml")
+
+
+
+==================
+
+
+import sqlite3
+import xml.etree.ElementTree as ET
+import csv
+
+# Mock XML functions
+def get_mock_test_runs():
+    """Generates mock test run data in XML format."""
+    return """<Runs xmlns="http://www.hp.com/PC/REST/API">
+    <Run>
+        <TestID>14699</TestID>
+        <ID>18479</ID>
+        <StartTime>2025-03-10 10:15:34</StartTime>
+        <EndTime>2025-03-10 10:45:34</EndTime>
+    </Run>
+    <Run>
+        <TestID>13316</TestID>
+        <ID>18478</ID>
+        <StartTime>2025-03-11 09:30:22</StartTime>
+        <EndTime>2025-03-11 10:00:22</EndTime>
+    </Run>
+    <Run>
+        <TestID>99</TestID>
+        <ID>14000</ID>
+        <StartTime>2025-03-12 08:00:00</StartTime>
+        <EndTime>2025-03-12 08:45:00</EndTime>
+    </Run>
+</Runs>"""
+
+
+def get_mock_tests():
+    """Generates mock test metadata in XML format."""
+    return """<Tests xmlns="http://www.hp.com/PC/REST/API">
+    <Test>
+        <ID>176</ID>
+        <TestID>14699</TestID>
+        <Name>e2e_test</Name>
+    </Test>
+    <Test>
+        <ID>177</ID>
+        <TestID>13316</TestID>
+        <Name>performance_test</Name>
+    </Test>
+    <Test>
+        <ID>178</ID>
+        <TestID>99</TestID>
+        <Name>low_priority_test</Name>
+    </Test>
+</Tests>"""
+
+
+def get_mock_xml():
+    """Returns another test run dataset."""
+    return """<Runs xmlns="http://www.hp.com/PC/REST/API">
+    <Run>
+        <TestID>15001</TestID>
+        <ID>20000</ID>
+        <StartTime>2025-03-12 08:00:00</StartTime>
+        <EndTime>2025-03-12 08:45:00</EndTime>
+    </Run>
+</Runs>"""
+
+
+# Function to parse XML and extract relevant data
+def extract_data_from_xml():
+    combined_data = []
+
+    # Parse each XML
+    for xml_data in [get_mock_test_runs(), get_mock_tests(), get_mock_xml()]:
+        root = ET.fromstring(xml_data)
+
+        # Extract test runs
+        for run in root.findall(".//Run", namespaces={"": "http://www.hp.com/PC/REST/API"}):
+            test_id = int(run.findtext("TestID"))
+            run_id = int(run.findtext("ID"))
+
+            # Apply filter: ID > 15000 and TestID > 100
+            if run_id > 15000 and test_id > 100:
+                combined_data.append({
+                    "ID": run_id,
+                    "TestID": test_id,
+                    "Name": None,  # Will be updated later
+                    "StartTime": run.findtext("StartTime"),
+                    "EndTime": run.findtext("EndTime")
+                })
+
+        # Extract test metadata
+        for test in root.findall(".//Test", namespaces={"": "http://www.hp.com/PC/REST/API"}):
+            test_id = int(test.findtext("TestID"))
+            name = test.findtext("Name")
+
+            # Find matching test runs and update the name
+            for entry in combined_data:
+                if entry["TestID"] == test_id:
+                    entry["Name"] = name
+
+    return combined_data
+
+
+# Function to store data in SQLite
+def store_in_sqlite(data):
+    conn = sqlite3.connect("test_data.db")
+    cursor = conn.cursor()
+
+    # Create table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS test_runs (
+            ID INTEGER PRIMARY KEY,
+            TestID INTEGER,
+            Name TEXT,
+            StartTime TEXT,
+            EndTime TEXT
+        )
+    """)
+
+    # Insert data
+    for row in data:
+        cursor.execute("INSERT OR IGNORE INTO test_runs VALUES (?, ?, ?, ?, ?)",
+                       (row["ID"], row["TestID"], row["Name"], row["StartTime"], row["EndTime"]))
+
+    conn.commit()
+    conn.close()
+
+
+# Function to save data in CSV
+def save_to_csv(data):
+    with open("test_data.csv", "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=["ID", "TestID", "Name", "StartTime", "EndTime"])
+        writer.writeheader()
+        writer.writerows(data)
+
+
+# Run extraction, database storage, and CSV export
+data = extract_data_from_xml()
+store_in_sqlite(data)
+save_to_csv(data)
+
+print("Filtered data successfully extracted, stored in SQLite, and saved as CSV!")
+
+
+=====================
+
+
+import sqlite3
+import xml.etree.ElementTree as ET
+import csv
+
+# Mock XML functions
+def get_mock_test_runs():
+    """Generates mock test run data in XML format."""
+    return """<Runs xmlns="http://www.hp.com/PC/REST/API">
+    <Run>
+        <TestID>14699</TestID>
+        <ID>18479</ID>
+        <StartTime>2025-03-10 10:15:34</StartTime>
+        <EndTime>2025-03-10 10:45:34</EndTime>
+    </Run>
+    <Run>
+        <TestID>13316</TestID>
+        <ID>18478</ID>
+        <StartTime>2025-03-11 09:30:22</StartTime>
+        <EndTime>2025-03-11 10:00:22</EndTime>
+    </Run>
+</Runs>"""
+
+
+def get_mock_tests():
+    """Generates mock test metadata in XML format."""
+    return """<Tests xmlns="http://www.hp.com/PC/REST/API">
+    <Test>
+        <ID>176</ID>
+        <TestID>14699</TestID>
+        <Name>e2e_test</Name>
+    </Test>
+    <Test>
+        <ID>177</ID>
+        <TestID>13316</TestID>
+        <Name>performance_test</Name>
+    </Test>
+</Tests>"""
+
+
+def get_mock_xml():
+    """Returns another test run dataset."""
+    return """<Runs xmlns="http://www.hp.com/PC/REST/API">
+    <Run>
+        <TestID>15001</TestID>
+        <ID>20000</ID>
+        <StartTime>2025-03-12 08:00:00</StartTime>
+        <EndTime>2025-03-12 08:45:00</EndTime>
+    </Run>
+</Runs>"""
+
+
+# Function to parse XML and extract relevant data
+def extract_data_from_xml():
+    combined_data = []
+
+    # Parse each XML
+    for xml_data in [get_mock_test_runs(), get_mock_tests(), get_mock_xml()]:
+        root = ET.fromstring(xml_data)
+
+        # Extract test runs
+        for run in root.findall(".//Run", namespaces={"": "http://www.hp.com/PC/REST/API"}):
+            combined_data.append({
+                "ID": run.findtext("ID"),
+                "TestID": run.findtext("TestID"),
+                "Name": None,  # Will be updated later
+                "StartTime": run.findtext("StartTime"),
+                "EndTime": run.findtext("EndTime")
+            })
+
+        # Extract test metadata
+        for test in root.findall(".//Test", namespaces={"": "http://www.hp.com/PC/REST/API"}):
+            test_id = test.findtext("TestID")
+            name = test.findtext("Name")
+
+            # Find matching test runs and update the name
+            for entry in combined_data:
+                if entry["TestID"] == test_id:
+                    entry["Name"] = name
+
+    return combined_data
+
+
+# Function to store data in SQLite
+def store_in_sqlite(data):
+    conn = sqlite3.connect("test_data.db")
+    cursor = conn.cursor()
+
+    # Create table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS test_runs (
+            ID INTEGER PRIMARY KEY,
+            TestID INTEGER,
+            Name TEXT,
+            StartTime TEXT,
+            EndTime TEXT
+        )
+    """)
+
+    # Insert data
+    for row in data:
+        cursor.execute("INSERT OR IGNORE INTO test_runs VALUES (?, ?, ?, ?, ?)",
+                       (row["ID"], row["TestID"], row["Name"], row["StartTime"], row["EndTime"]))
+
+    conn.commit()
+    conn.close()
+
+
+# Function to save data in CSV
+def save_to_csv(data):
+    with open("test_data.csv", "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=["ID", "TestID", "Name", "StartTime", "EndTime"])
+        writer.writeheader()
+        writer.writerows(data)
+
+
+# Run extraction, database storage, and CSV export
+data = extract_data_from_xml()
+store_in_sqlite(data)
+save_to_csv(data)
+
+print("Data successfully extracted, stored in SQLite, and saved as CSV!")
+
+==========================
+
+
+
+import requests
+import sqlite3
+import xml.etree.ElementTree as ET
+import csv
+
+# API Configuration
+LRE_SERVER = "https://your-loadtest-server.com"
+HEADERS = {"Authorization": "Bearer YOUR_ACCESS_TOKEN"}
+
+# API Endpoints
+RUN_DETAILS_API = f"{LRE_SERVER}/LoadTest/rest/domains/{{domainName}}/projects/{{projectName}}/Runs/{{runID}}/Extended"
+TEST_METADATA_API = f"{LRE_SERVER}/LoadTest/rest/domains/{{domainName}}/projects/{{projectName}}/tests?query={{ID[{{testID}}]}}"
+
+# Function to call API for run details
+def fetch_extended_run_data(run_id, domain_name="defaultDomain", project_name="defaultProject"):
+    """Fetches StartTime and EndTime by calling the REST API for a given run ID."""
+    url = RUN_DETAILS_API.format(domainName=domain_name, projectName=project_name, runID=run_id)
+    response = requests.get(url, headers=HEADERS)
+
+    if response.status_code == 200:
+        root = ET.fromstring(response.text)
+        return root.findtext("StartTime"), root.findtext("EndTime")
+    
+    print(f"Failed to fetch run data for RunID {run_id}, Status: {response.status_code}")
+    return None, None
+
+# Function to fetch test metadata (Name) using TestID
+def fetch_test_metadata(test_id, domain_name="defaultDomain", project_name="defaultProject"):
+    """Fetches the test Name using the TestID via API."""
+    url = TEST_METADATA_API.format(domainName=domain_name, projectName=project_name, testID=test_id)
+    response = requests.get(url, headers=HEADERS)
+
+    if response.status_code == 200:
+        root = ET.fromstring(response.text)
+        test_name = root.findtext(".//Test/Name")
+        return test_name if test_name else "Unknown"
+    
+    print(f"Failed to fetch test metadata for TestID {test_id}, Status: {response.status_code}")
+    return "Unknown"
+
+# Mock XML function
+def get_mock_test_runs():
+    """Generates mock test run data in XML format."""
+    return """<Runs xmlns="http://www.hp.com/PC/REST/API">
+    <Run>
+        <TestID>14699</TestID>
+        <ID>18479</ID>
+    </Run>
+    <Run>
+        <TestID>13316</TestID>
+        <ID>18478</ID>
+    </Run>
+    <Run>
+        <TestID>99</TestID>
+        <ID>14000</ID>
+    </Run>
+</Runs>"""
+
+# Function to extract, fetch API data, and store in SQLite & CSV
+def extract_and_store_data():
+    combined_data = []
+    root = ET.fromstring(get_mock_test_runs())
+
+    for run in root.findall(".//Run", namespaces={"": "http://www.hp.com/PC/REST/API"}):
+        test_id = int(run.findtext("TestID"))
+        run_id = int(run.findtext("ID"))
+
+        # Apply filter: ID > 15000 and TestID > 100
+        if run_id > 15000 and test_id > 100:
+            start_time, end_time = fetch_extended_run_data(run_id)  # API call for StartTime/EndTime
+            test_name = fetch_test_metadata(test_id)  # API call for Test Name
+
+            combined_data.append({
+                "ID": run_id,
+                "TestID": test_id,
+                "Name": test_name,
+                "StartTime": start_time,
+                "EndTime": end_time
+            })
+
+    # Store in SQLite
+    conn = sqlite3.connect("test_data.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS test_runs (
+            ID INTEGER PRIMARY KEY,
+            TestID INTEGER,
+            Name TEXT,
+            StartTime TEXT,
+            EndTime TEXT
+        )
+    """)
+    for row in combined_data:
+        cursor.execute("INSERT OR IGNORE INTO test_runs VALUES (?, ?, ?, ?, ?)",
+                       (row["ID"], row["TestID"], row["Name"], row["StartTime"], row["EndTime"]))
+    conn.commit()
+    conn.close()
+
+    # Save to CSV
+    with open("test_data.csv", "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=["ID", "TestID", "Name", "StartTime", "EndTime"])
+        writer.writeheader()
+        writer.writerows(combined_data)
+
+    print("Data successfully extracted, stored in SQLite, and saved to CSV!")
+
+# Run the process
+extract_and_store_data()
+
+
+
+========================================
+
+
+import sqlite3
+
+# Function to fetch test details dynamically from SQLite DB
+def fetch_test_details(test_id):
+    """Fetches test details (Start Date, End Date, Test Scenario Name) from the SQLite database."""
+    conn = sqlite3.connect("test_data.db")
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT StartTime, EndTime, Name FROM test_runs WHERE TestID = ?", (test_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return {
+            "start_date": row[0],  # StartTime
+            "end_date": row[1],    # EndTime
+            "testScenarioName": row[2]  # Name
+        }
+    return {}  # Return empty dictionary if TestID not found
+
+# Example Usage
+print(fetch_test_details(14699))  # Replace with an actual TestID in DB
+
+
+
+=============
+
+
+import sqlite3
+
+def fetch_transaction_data(test_id):
+    """Fetch distinct transaction names from SQLite and return only those for the given TestID."""
+    conn = sqlite3.connect("test_data.db")
+    cursor = conn.cursor()
+
+    # Fetch all distinct transactions with their TestIDs
+    cursor.execute("SELECT DISTINCT TestID, TransactionName FROM test_transactions;")
+    rows = cursor.fetchall()
+    conn.close()
+
+    # Organize data into a dictionary { TestID: [TransactionName1, TransactionName2, ...] }
+    transaction_data = {}
+    for t_id, transaction_name in rows:
+        if t_id not in transaction_data:
+            transaction_data[t_id] = []
+        transaction_data[t_id].append(transaction_name)
+
+    # Return only the transactions for the provided test_id, or an empty list if not found
+    return {test_id: transaction_data.get(test_id, [])}
+
+# Example Usage
+test_id_input = "T001"
+print(fetch_transaction_data(test_id_input))
