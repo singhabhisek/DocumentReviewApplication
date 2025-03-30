@@ -105,26 +105,64 @@ def extract_text_by_page(docx_path):
 
     return text_by_page
 
+
+# def extract_section_names(docx_path):
+#     """Extract section names from the document."""
+#     with zipfile.ZipFile(docx_path, "r") as docx_zip:
+#         document_xml = docx_zip.read("word/document.xml")
+
+#     root = ET.fromstring(document_xml)
+#     namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    
+#     section_names = []
+#     paragraphs = root.findall(".//w:p", namespace)
+    
+#     for para in paragraphs:
+#         texts = [node.text for node in para.findall(".//w:t", namespace) if node.text]
+#         text = " ".join(texts).strip()
+        
+#         if text:
+#             section_names.append(text)
+
+#     return section_names
+
+
 def extract_section_names(docx_path):
-    """Extract section names from the document."""
+    """Extract section names (headings and bold text) from the document."""
     with zipfile.ZipFile(docx_path, "r") as docx_zip:
         document_xml = docx_zip.read("word/document.xml")
 
     root = ET.fromstring(document_xml)
     namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    
+
     section_names = []
     paragraphs = root.findall(".//w:p", namespace)
-    
+
     for para in paragraphs:
-        texts = [node.text for node in para.findall(".//w:t", namespace) if node.text]
-        text = " ".join(texts).strip()
-        
-        if text:
+        # Extract all text inside this paragraph (even if not inside <w:r>)
+        texts = [node.text.strip() for node in para.findall(".//w:t", namespace) if node.text]
+        text = " ".join(texts).strip()  # Properly join words with spaces
+
+        # Check if the paragraph has a heading style
+        p_style = para.find(".//w:pPr/w:pStyle", namespace)
+        is_heading = False
+        if p_style is not None:
+            style_val = p_style.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val", "")
+            if "Heading" in style_val:  # Detects Heading1, Heading2, etc.
+                is_heading = True
+
+        # Check if any text is bold
+        has_bold = any(r.find(".//w:rPr/w:b", namespace) is not None for r in para.findall(".//w:r", namespace))
+
+        # Add text if it's a heading OR contains bold text
+        if text and (is_heading or has_bold):
             section_names.append(text)
 
-    return section_names
+    # Remove duplicate or extra spaces
+    section_names = list(set(name.replace("  ", " ") for name in section_names))
 
+    return section_names
+    
 def extract_table_content(docx_path):
     """Extracts key-value pairs from tables in the document."""
     table_data = []
