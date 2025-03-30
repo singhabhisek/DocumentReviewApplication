@@ -1,3 +1,48 @@
+Emoji	Unicode Code	Description
+✅	U+2705	Check Mark
+📂	U+1F4C2	Folder
+⚙️	U+2699	Settings
+🚀	U+1F680	Rocket
+🔥	U+1F525	Fire
+📤	U+1F4E4	Outbox
+🏠	U+1F3E0	Home
+
+ U+2705 Success / Done  
+❌ U+274C Error / Cancel  
+⚠️ U+26A0 Warning  
+ℹ️ U+2139 Info  
+📂 U+1F4C2 Folder / Upload  
+📁 U+1F4C1 File  
+📤 U+1F4E4 Upload  
+📥 U+1F4E5 Download  
+📝 U+1F4DD Edit / Notes  
+🔍 U+1F50D Search  
+📊 U+1F4CA Graph / Stats  
+⏳ U+23F3 Loading / Waiting  
+🏠 U+1F3E0 Home  
+🔄 U+1F504 Refresh  
+🔧 U+1F527 Settings  
+⚙️ U+2699 Configuration  
+📌 U+1F4CC Pin / Important  
+🎯 U+1F3AF Target / Goal  
+🛠️ U+1F6E0 Tools  
+🔗 U+1F517 Link  
+👤 U+1F464 User  
+👥 U+1F465 Users / Group  
+🏢 U+1F3E2 Office  
+💼 U+1F4BC Business  
+🎉 U+1F389 Celebration  
+🏆 U+1F3C6 Trophy  
+🌟 U+1F31F Star  
+🏅 U+1F3C5 Medal  
+⚡ U+26A1 Fast / Speed  
+⚖️ U+2696 Comparison / Balance  
+📑 U+1F4D1 Report / Document  
+📜 U+1F4DC Scroll / Paper  
+📈 U+1F4C8 Increase / Growth  
+📉 U+1F4C9 Decrease / Decline  
+🚀 U+1F680 Performance / Boost  
+
 import os
 import streamlit as st
 import base64
@@ -129,7 +174,7 @@ st.markdown(
 
 # ✅ Sidebar with Navigation
 st.sidebar.title("📌 Navigation")
-selected_page = st.sidebar.radio("Go to:", ["🏠 Home", "📊 PPT Review", "📝 Word Review"])
+selected_page = st.sidebar.radio("Go to:", ["🏠 Home", "📊 PPT Review", "📝 Word Review", "\U0001F4C2 Document Upload"])
 
 # # ✅ Handle Page Navigation
 # if selected_page == "🏠 Home":
@@ -165,3 +210,6 @@ elif selected_page == "📊 PPT Review":
 
 elif selected_page == "📝 Word Review":
     load_page("uiword.py")
+
+elif selected_page == "\U0001F4C2 Document Upload":
+    load_page("uiupload.py")
