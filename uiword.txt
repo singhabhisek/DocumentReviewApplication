@@ -1,3 +1,78 @@
+import openpyxl
+
+def extract_excel_data_from_embedded(file_path):
+    """Extracts data from embedded Excel file for specific sheets and merged cells."""
+    
+    sheets_to_check = [
+        "summary", "logs", "contacts", "architecture", "nonfunctional requirement", "test data"
+    ]
+    extracted_data = {}
+    matching_sheets = []
+
+    try:
+        # Load the embedded Excel file
+        wb = openpyxl.load_workbook(file_path, data_only=True)  # Read formulas as values
+
+        # Iterate through each sheet in the Excel file
+        for sheet_name in wb.sheetnames:
+            if sheet_name.lower() in sheets_to_check:
+                sheet = wb[sheet_name]
+
+                # Extract values from specific merged cells
+                project_release_id = extract_merged_cell(sheet, "F16:K16")
+                app_name_id = extract_merged_cell(sheet, "G30:M30")
+                
+                # Extract values from A2 and B8
+                a2_value = sheet["A2"].value
+                b8_value = sheet["B8"].value
+
+                # Store the extracted data
+                extracted_data[sheet_name] = {
+                    "A2": a2_value, 
+                    "B8": b8_value,
+                    "ProjectID-ReleaseID": project_release_id,
+                    "Application Name (APP-ID)": app_name_id
+                }
+
+                matching_sheets.append(sheet_name)
+
+        # Generate a warning if fewer than all sheets are found
+        missing_sheets = set(sheets_to_check) - set(matching_sheets)
+        if len(matching_sheets) >= 3:
+            warning_msg = f"⚠️ Warning: Some sheets are missing: {missing_sheets}" if missing_sheets else "✅ All required sheets found."
+            return extracted_data, matching_sheets, warning_msg
+        else:
+            return extracted_data, matching_sheets, f"❌ Error: Only {len(matching_sheets)} required sheets found. Missing: {missing_sheets}"
+
+    except Exception as e:
+        return {}, [], f"❌ Error processing embedded Excel: {e}"
+
+
+def extract_merged_cell(sheet, cell_range):
+    """Extracts the value from a merged cell range."""
+    try:
+        merged_cells = sheet.merged_cells.ranges  # Get all merged ranges
+        for merged_range in merged_cells:
+            if str(merged_range) == cell_range:  # Match the specific range
+                return sheet[merged_range.min_row][merged_range.min_col].value
+    except Exception as e:
+        return f"❌ Error reading merged cell {cell_range}: {e}"
+    
+    return None  # Return None if no merged cell is found
+
+
+# Example Usage
+file_path = "embedded_excel.xlsx"  # Replace with your actual file path
+extracted_data, matched_sheets, warning = extract_excel_data_from_embedded(file_path)
+
+print(extracted_data)
+print("✅ Matching Sheets:", matched_sheets)
+print(warning)
+
+
+============
+
+
 from io import BytesIO
 import streamlit as st
 import zipfile
