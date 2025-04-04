@@ -1,3 +1,4 @@
+import time
 from io import BytesIO
 import streamlit as st
 import zipfile
@@ -1394,15 +1395,34 @@ def validate_document(docx_path, config_file, sheet_name):
     footer_validation = page1_validation["details"].get("Footer Validation", {})
 
     footer_status = footer_validation.get("status", "❌ Unknown Status")
-    footer_found = footer_validation.get("found", "N/A")
+    footer_found_raw = footer_validation.get("found", "N/A")
     footer_expected = footer_validation.get("expected", "N/A")
     footer_reason = footer_validation.get("reason", "No reason provided")
 
+
+    # Extract clean project name before the word "Page"
+    project_match = re.search(r"Project Name:\s*(.*?)\s*Page", footer_found_raw)
+    footer_found = project_match.group(1).strip() if project_match else footer_found_raw
+
     # Avoid duplicating 'Expected' in the message if it's already in the 'found' field
-    if "Expected:" in str(footer_found):
-        footer_results.append(f"{footer_status} Footer: {footer_found} → {footer_reason}")
+    # Format message cleanly without repeating 'Expected'
+    if footer_found and footer_expected:
+        footer_results.append(
+            f"{footer_status} Footer: Expected '{footer_expected}', but found '{footer_found}' → {footer_reason}"
+        )
+    elif footer_found:
+        footer_results.append(
+            f"{footer_status} Footer: Found '{footer_found}' → {footer_reason}"
+        )
+    elif footer_expected:
+        footer_results.append(
+            f"{footer_status} Footer: Expected '{footer_expected}' → {footer_reason}"
+        )
     else:
-        footer_results.append(f"{footer_status} Footer: Found '{footer_found}', Expected '{footer_expected}' → {footer_reason}")
+        footer_results.append(
+            f"{footer_status} Footer: No footer content found → {footer_reason}"
+        )
+
 
     # Store the footer validation results separately
     validation_results["Footer Validation"] = footer_results
@@ -1618,7 +1638,13 @@ export_clicked = st.session_state.get("export_clicked", False)
 
 
 if validate_button and docx_file:
+    st.session_state["validation_result"] = None
+    st.session_state["validation_completed"] = False
+    st.session_state["export_clicked"] = False
+    validation_result = None
+    processed_data = None
     with st.spinner("🔍 Validating document..."):
+        time.sleep(2)  # ⏳ Simulate processing delay
         # Save uploaded file temporarily
         docx_path = os.path.join("temp", docx_file.name)
         try:
