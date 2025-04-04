@@ -1,0 +1,651 @@
+
+import zipfile
+import xml.etree.ElementTree as ET
+import re
+
+def extract_all_tables(docx_path):
+    """Extracts all tables from the document and returns them as a list of lists."""
+    table_data = []
+    
+    with zipfile.ZipFile(docx_path, "r") as docx_zip:
+        document_xml = docx_zip.read("word/document.xml")
+
+    root = ET.fromstring(document_xml)
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+    tables = root.findall(".//w:tbl", namespace)
+
+    for table in tables:
+        table_rows = []
+        for row in table.findall(".//w:tr", namespace):
+            cells = row.findall(".//w:tc", namespace)
+            row_data = []
+            for cell in cells:
+                texts = [node.text for node in cell.findall(".//w:t", namespace) if node.text]
+                row_data.append(" ".join(texts).strip())
+
+            if row_data:
+                table_rows.append(row_data)
+
+        if table_rows:
+            table_data.append(table_rows)  # Append each table separately
+    
+    return table_data
+
+
+def find_table_by_name(table_data, table_name):
+    """Searches for a table containing the given table_name in its first row."""
+    for table in table_data:
+        if table and table_name.lower() in [cell.lower() for cell in table[0]]:  # Check header row
+            return table  # Return the matching table
+    
+    return None  # No matching table found
+
+
+def validate_third_row(table):
+    """Validates that:
+       - The table has at least 3 rows.
+       - The third row contains an author name in column 1.
+       - The third column has a valid date format."""
+    
+    if len(table) < 3:
+        return "❌ Table does not have at least 3 rows."
+
+    third_row = table[2]  # Index 2 -> Third row
+    if len(third_row) < 3:
+        return "❌ Third row does not have at least 3 columns."
+
+    author_name = third_row[0].strip()
+    date_value = third_row[2].strip()
+
+    # Validate author name (Assuming it's a simple text name)
+    if not author_name or not re.match(r"^[A-Za-z\s]+$", author_name):
+        return f"❌ Author name validation failed: '{author_name}'"
+
+    # Validate date format (YYYY-MM-DD or DD/MM/YYYY or MM-DD-YYYY)
+    date_pattern = r"\b(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})\b"
+    if not re.match(date_pattern, date_value):
+        return f"❌ Date validation failed: '{date_value}'"
+
+    return f"✅ Table validated successfully. Author: '{author_name}', Date: '{date_value}'"
+
+
+# Example Usage
+docx_file = "example.docx"  # Replace with your actual file path
+table_name_to_find = "Test Data Table"
+
+# Extract all tables
+all_tables = extract_all_tables(docx_file)
+
+# Find the specific table
+matched_table = find_table_by_name(all_tables, table_name_to_find)
+
+# Validate third row
+if matched_table:
+    validation_result = validate_third_row(matched_table)
+    print(validation_result)
+else:
+    print(f"❌ Table '{table_name_to_find}' not found.")
+
+
+
+
+# Section 4: Embedded Excel Check
+embedded_excels = extract_embedded_excel(docx_path)
+embedded_excel_results = []
+
+if embedded_excels:
+    for excel_file in embedded_excels:
+        extracted_data, matching_sheets, warning_msg = extract_excel_data_from_embedded(excel_file)
+
+        if len(matching_sheets) >= 3:
+            embedded_excel_results.append(f"✅ Embedded Excel File contains the required sheets: {', '.join(sheet.title() for sheet in matching_sheets)}")
+            if warning_msg:
+                embedded_excel_results.append(warning_msg)
+
+            # Compare against selected_row values
+            sheet_data = extracted_data.get(matching_sheets[0], {})
+
+            # A2 should match Project ID
+            a2_value = sheet_data.get("A2")
+            if a2_value == projectID:
+                embedded_excel_results.append(f"  - ✅ A2 matches Project ID: {a2_value}")
+            else:
+                embedded_excel_results.append(f"  - ❌ A2 mismatch: Expected '{projectID}', Found '{a2_value}'")
+
+            # B8 should match Release ID
+            b8_value = sheet_data.get("B8")
+            if b8_value == releaseID:
+                embedded_excel_results.append(f"  - ✅ B8 matches Release ID: {b8_value}")
+            else:
+                embedded_excel_results.append(f"  - ❌ B8 mismatch: Expected '{releaseID}', Found '{b8_value}'")
+
+            # Merged cell F16:K16 should be "{projectID} - {releaseID}"
+            prj_rel_value = sheet_data.get("ProjectID-ReleaseID")
+            expected_prj_rel = f"{projectID} - {releaseID}"
+            if prj_rel_value == expected_prj_rel:
+                embedded_excel_results.append(f"  - ✅ ProjectID-ReleaseID cell matches: {prj_rel_value}")
+            else:
+                embedded_excel_results.append(f"  - ❌ ProjectID-ReleaseID mismatch: Expected '{expected_prj_rel}', Found '{prj_rel_value}'")
+
+            # Merged cell G30:M30 should be "{appName} ({appID})"
+            app_info_value = sheet_data.get("Application Name (APP-ID)")
+            expected_app_info = f"{appName} ({appID})"
+            if app_info_value == expected_app_info:
+                embedded_excel_results.append(f"  - ✅ Application Name cell matches: {app_info_value}")
+            else:
+                embedded_excel_results.append(f"  - ❌ Application Name mismatch: Expected '{expected_app_info}', Found '{app_info_value}'")
+
+            break  # Exit after first valid Excel file
+
+        else:
+            embedded_excel_results.append("❌ Embedded Excel does not contain minimum required sheets.")
+
+else:
+    embedded_excel_results.append("❌ No embedded Excel files found in the document.")
+
+validation_results["Embedded Excel Validation"] = embedded_excel_results
+
+
+
+
+def extract_excel_data_from_embedded(file_path):
+    """Extracts data from embedded Excel file for specific sheets and cells."""
+    sheets_to_check = [
+        "summary", "logs", "contacts", "architecture", "nonfunctional requirement", "test data"
+    ]
+    extracted_data = {}
+    matching_sheets = []
+    warning_msg = ""
+
+    try:
+        wb = openpyxl.load_workbook(file_path)
+
+        for sheet_name in wb.sheetnames:
+            if sheet_name.lower() in sheets_to_check:
+                sheet = wb[sheet_name]
+
+                # Extract key cells
+                a2_value = sheet["A2"].value
+                b8_value = sheet["B8"].value
+
+                # Optional: extract merged cell content from F16:K16 and G30:M30
+                prj_rel_value = None
+                app_info_value = None
+
+                for merged in sheet.merged_cells.ranges:
+                    if str(merged) == "F16:K16":
+                        prj_rel_value = sheet["F16"].value
+                    elif str(merged) == "G30:M30":
+                        app_info_value = sheet["G30"].value
+
+                extracted_data[sheet_name] = {
+                    "A2": a2_value,
+                    "B8": b8_value,
+                    "ProjectID-ReleaseID": prj_rel_value,
+                    "Application Name (APP-ID)": app_info_value
+                }
+
+                matching_sheets.append(sheet_name)
+
+        # Generate warning if fewer than 6 sheets are present
+        missing = [sheet for sheet in sheets_to_check if sheet not in [s.lower() for s in matching_sheets]]
+        if len(matching_sheets) >= 3 and missing:
+            warning_msg = f"⚠️ Warning: Missing expected sheets: {', '.join(missing)}"
+
+    except Exception as e:
+        print(f"Error processing embedded Excel: {e}")
+
+    return extracted_data, matching_sheets, warning_msg  # ✅ return 3 values
+
+
+
+
+
+
+
+
+
+
+
+
+
+======================
+
+
+
+# Section 4: Embedded Excel Check
+embedded_excels = extract_embedded_excel(docx_path)
+embedded_excel_results = []
+
+if embedded_excels:
+    for excel_file in embedded_excels:
+        extracted_data, matching_sheets = extract_excel_data_from_embedded(excel_file)
+
+        if len(matching_sheets) >= 3:
+            embedded_excel_results.append(
+                f"✅ Embedded Excel File contains required sheets: {', '.join(sheet.title() for sheet in matching_sheets)}"
+            )
+
+            # Compare extracted values from the FIRST matching sheet (assumption: all similar structure)
+            first_sheet = matching_sheets[0]
+            sheet_data = extracted_data.get(first_sheet, {})
+
+            merged_id_value = sheet_data.get("ProjectReleaseID (F16:K16)", "")
+            app_name_value = sheet_data.get("AppName (G30:M30)", "")
+
+            project_id = config.get("Project ID", "").strip()
+            release_id = config.get("Release ID", "").strip()
+            expected_app_name = config.get("Business Application", "").strip()
+
+            # Compare merged Project - Release ID
+            if merged_id_value:
+                parts = [part.strip() for part in merged_id_value.split("-")]
+                if len(parts) == 2:
+                    found_project_id, found_release_id = parts
+
+                    if found_project_id == project_id:
+                        embedded_excel_results.append(f"  - ✅ Project ID (F16) matches: {found_project_id}")
+                    else:
+                        embedded_excel_results.append(f"  - ❌ Project ID (F16) mismatch. Found: '{found_project_id}', Expected: '{project_id}'")
+
+                    if found_release_id == release_id:
+                        embedded_excel_results.append(f"  - ✅ Release ID (K16) matches: {found_release_id}")
+                    else:
+                        embedded_excel_results.append(f"  - ❌ Release ID (K16) mismatch. Found: '{found_release_id}', Expected: '{release_id}'")
+                else:
+                    embedded_excel_results.append(f"  - ❌ Could not split Project-Release ID properly: '{merged_id_value}'")
+            else:
+                embedded_excel_results.append("  - ❌ Project-Release ID cell is empty.")
+
+            # Compare App Name
+            if app_name_value == expected_app_name:
+                embedded_excel_results.append(f"  - ✅ App Name (G30) matches: {app_name_value}")
+            else:
+                embedded_excel_results.append(f"  - ❌ App Name (G30) mismatch. Found: '{app_name_value}', Expected: '{expected_app_name}'")
+
+            # Optional: Warn about missing sheets
+            required_sheets = {
+                "summary", "logs&contacts", "contacts", "architecture", "non functional requirement", "test data"
+            }
+            missing_sheets = required_sheets - {s.lower() for s in matching_sheets}
+            if missing_sheets:
+                embedded_excel_results.append(f"⚠️ Warning: Missing expected sheets: {', '.join(missing_sheets)}")
+
+            break  # Only check the first valid embedded file
+    else:
+        embedded_excel_results.append("❌ Please check if you have attached the correct Non-Functional Requirement sheet template.")
+else:
+    embedded_excel_results.append("❌ No embedded Excel files found in the document.")
+
+validation_results["Embedded Excel Validation"] = embedded_excel_results
+
+
+
+
+---
+
+def normalize_for_match(text, aggressive=False):
+    if not text:
+        return ""
+    text = text.lower()
+    return text.replace(" ", "") if aggressive else "".join(text.split())
+
+# --- Validate Project ID and Release ID (F16:K16)
+if merged_id_value:
+    merged_id_soft = normalize_for_match(merged_id_value)
+    merged_id_strict = normalize_for_match(merged_id_value, aggressive=True)
+
+    project_soft = normalize_for_match(project_id)
+    project_strict = normalize_for_match(project_id, aggressive=True)
+
+    release_soft = normalize_for_match(release_id)
+    release_strict = normalize_for_match(release_id, aggressive=True)
+
+    # First try soft match (remove space between words)
+    project_match = project_soft in merged_id_soft or project_strict in merged_id_strict
+    release_match = release_soft in merged_id_soft or release_strict in merged_id_strict
+
+    if project_match:
+        embedded_excel_results.append(f"  - ✅ Project ID found in cell (F16:K16): '{project_id}'")
+    else:
+        embedded_excel_results.append(f"  - ❌ Project ID NOT found in cell (F16:K16). Expected: '{project_id}'")
+
+    if release_match:
+        embedded_excel_results.append(f"  - ✅ Release ID found in cell (F16:K16): '{release_id}'")
+    else:
+        embedded_excel_results.append(f"  - ❌ Release ID NOT found in cell (F16:K16). Expected: '{release_id}'")
+else:
+    embedded_excel_results.append("  - ❌ Project/Release ID cell (F16:K16) is empty.")
+
+# --- Validate Application Name + App ID in G30:M30
+if app_name_value:
+    app_name_soft = normalize_for_match(app_name_value)
+    app_name_strict = normalize_for_match(app_name_value, aggressive=True)
+
+    expected_app_soft = normalize_for_match(expected_app_name)
+    expected_app_strict = normalize_for_match(expected_app_name, aggressive=True)
+
+    app_id = str(selected_row.get("Application ID", "")).strip()
+    app_id_clean = normalize_for_match(app_id, aggressive=True)
+
+    app_id_found = app_id_clean in app_name_soft or app_id_clean in app_name_strict
+    app_name_match = expected_app_soft in app_name_soft or expected_app_strict in app_name_strict
+
+    if app_id_found:
+        embedded_excel_results.append(f"  - ✅ App ID '{app_id}' found in Application Name cell (G30:M30)")
+    else:
+        embedded_excel_results.append(f"  - ❌ App ID '{app_id}' NOT found in Application Name cell (G30:M30)")
+
+    if app_name_match:
+        embedded_excel_results.append(f"  - ✅ Application Name matches expected content: '{expected_app_name}'")
+    else:
+        embedded_excel_results.append(f"  - ❌ Application Name mismatch. Found: '{app_name_value}', Expected: '{expected_app_name}'")
+else:
+    embedded_excel_results.append("  - ❌ Application Name cell (G30:M30) is empty.")
+
+
+=============
+
+
+def extract_excel_data_from_embedded(file_path):
+    """
+    Extracts specific cell data only from embedded Excel files
+    that contain at least 3 of the required sheets.
+    Also returns messages if any required sheets are missing.
+    """
+
+    required_sheets = {
+        "summary", 
+        "logs&contacts", 
+        "contacts", 
+        "architecture", 
+        "non functional requirement", 
+        "test data"
+    }
+
+    extracted_data = {}
+    matching_sheets = []
+    messages = []
+
+    try:
+        wb = openpyxl.load_workbook(file_path, data_only=True)
+
+        # Identify matching sheets
+        for sheet_name in wb.sheetnames:
+            if sheet_name.strip().lower() in required_sheets:
+                matching_sheets.append(sheet_name)
+
+        if len(matching_sheets) < 3:
+            # Do not process this file further or show it in UI
+            return None, None, None
+
+        # Extract data from the matching sheets
+        for sheet_name in matching_sheets:
+            sheet = wb[sheet_name]
+            project_release_id = sheet["F16"].value  # Handles merged cell
+            app_name = sheet["G30"].value            # Handles merged cell
+            extracted_data[sheet_name] = {
+                "ProjectReleaseID (F16:K16)": project_release_id,
+                "AppName (G30:M30)": app_name
+            }
+
+        # If some expected sheets are missing, include a message (only for this file)
+        found_set = {s.lower() for s in matching_sheets}
+        missing_sheets = required_sheets - found_set
+        if missing_sheets:
+            messages.append(f"⚠️ Missing sheets: {', '.join(sorted(missing_sheets))}")
+
+    except Exception as e:
+        messages.append(f"🚨 Error processing embedded Excel: {str(e)}")
+
+    return extracted_data, matching_sheets, messages
+
+
+
+embedded_excel_results = []
+
+if embedded_excels:
+    for excel_file in embedded_excels:
+        extracted_data, matching_sheets, messages = extract_excel_data_from_embedded(excel_file)
+
+        if extracted_data:  # Only process files with ≥3 valid sheets
+            embedded_excel_results.append(
+                f"✅ Embedded Excel File: `{os.path.basename(excel_file)}` contains required sheets: {', '.join(sheet.title() for sheet in matching_sheets)}"
+            )
+
+            # Use the first matching sheet for cell value comparison
+            first_sheet = matching_sheets[0]
+            sheet_data = extracted_data.get(first_sheet, {})
+
+            merged_id_value = sheet_data.get("ProjectReleaseID (F16:K16)", "")
+            app_name_value = sheet_data.get("AppName (G30:M30)", "")
+
+            # Your reference values
+            project_id = projectID
+            release_id = releaseID
+            expected_app_name = appName
+            app_id = str(appID).strip()
+
+            def normalize_for_match(text, aggressive=False):
+                if not text:
+                    return ""
+                text = text.lower()
+                return text.replace(" ", "") if aggressive else "".join(text.split())
+
+            # --- Validate Project & Release ID (F16:K16)
+            if merged_id_value:
+                merged_soft = normalize_for_match(merged_id_value)
+                merged_strict = normalize_for_match(merged_id_value, aggressive=True)
+
+                proj_soft = normalize_for_match(project_id)
+                proj_strict = normalize_for_match(project_id, aggressive=True)
+
+                rel_soft = normalize_for_match(release_id)
+                rel_strict = normalize_for_match(release_id, aggressive=True)
+
+                project_match = proj_soft in merged_soft or proj_strict in merged_strict
+                release_match = rel_soft in merged_soft or rel_strict in merged_strict
+
+                if project_match:
+                    embedded_excel_results.append(f"  - ✅ Project ID found in F16:K16: '{project_id}'")
+                else:
+                    embedded_excel_results.append(f"  - ❌ Project ID NOT found in F16:K16. Expected: '{project_id}'")
+
+                if release_match:
+                    embedded_excel_results.append(f"  - ✅ Release ID found in F16:K16: '{release_id}'")
+                else:
+                    embedded_excel_results.append(f"  - ❌ Release ID NOT found in F16:K16. Expected: '{release_id}'")
+            else:
+                embedded_excel_results.append("  - ❌ Project/Release ID cell (F16:K16) is empty.")
+
+            # --- Validate Application Name (G30:M30)
+            if app_name_value:
+                app_soft = normalize_for_match(app_name_value)
+                app_strict = normalize_for_match(app_name_value, aggressive=True)
+
+                expected_app_soft = normalize_for_match(expected_app_name)
+                expected_app_strict = normalize_for_match(expected_app_name, aggressive=True)
+
+                app_id_clean = normalize_for_match(app_id, aggressive=True)
+
+                app_id_found = app_id_clean in app_soft or app_id_clean in app_strict
+                app_name_match = expected_app_soft in app_soft or expected_app_strict in app_strict
+
+                if app_id_found:
+                    embedded_excel_results.append(f"  - ✅ App ID '{app_id}' found in Application Name (G30:M30)")
+                else:
+                    embedded_excel_results.append(f"  - ❌ App ID '{app_id}' NOT found in Application Name (G30:M30)")
+
+                if app_name_match:
+                    embedded_excel_results.append(f"  - ✅ Application Name matches expected: '{expected_app_name}'")
+                else:
+                    embedded_excel_results.append(f"  - ❌ Application Name mismatch. Found: '{app_name_value}', Expected: '{expected_app_name}'")
+            else:
+                embedded_excel_results.append("  - ❌ Application Name cell (G30:M30) is empty.")
+
+            # --- Optional: Show missing sheet info for this file only
+            if messages:
+                for msg in messages:
+                    embedded_excel_results.append(msg)
+
+            break  # Only process the first valid embedded Excel file
+    else:
+        embedded_excel_results.append("❌ Please check if you have attached the correct Non-Functional Requirement sheet template.")
+else:
+    embedded_excel_results.append("❌ No embedded Excel files found in the document.")
+
+
+===================
+
+
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from datetime import datetime
+
+def export_custom_template(validation_result, docx_file):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Validation Report"
+
+    # --- Header rows ---
+    ws["A1"] = "Review Result"
+    ws["A2"] = f"Date of Review: {datetime.today().strftime('%Y-%m-%d')}"
+    ws["A3"] = f"Document Name: {docx_file.name if docx_file else 'N/A'}"
+
+    # --- Space between header and data (optional) ---
+    ws.append([])  # Row 4 empty
+
+    # --- Prepare data from validation_result ---
+    rows_to_add = []
+    for section, results in validation_result.items():
+        if isinstance(results, list):
+            for result in results:
+                rows_to_add.append([section, result])
+        else:
+            rows_to_add.append([section, results])
+
+    # --- Write data starting from Row 5 ---
+    for row in rows_to_add:
+        ws.append(row)
+
+    # --- Save to BytesIO for download ---
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return output
+
+
+# Inside your validation success block
+excel_bytes = export_custom_template(validation_result, docx_file)
+
+st.download_button(
+    label="📥 Download Excel Report",
+    data=excel_bytes,
+    file_name="Validation_Report.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
+===============================
+
+
+import re
+
+footer_results = []
+
+footer_validation = page1_validation["details"].get("Footer Validation", {})
+
+footer_status = footer_validation.get("status", "❌ Unknown Status")
+footer_found_raw = footer_validation.get("found", "").strip()
+footer_expected = footer_validation.get("expected", "").strip()
+footer_reason = footer_validation.get("reason", "No reason provided")
+
+# Extract clean project name before the word "Page"
+match = re.search(r"(Project Name:.*?Page\s*\d*)", footer_found_raw)
+footer_found = match.group(1) if match else footer_found_raw
+
+# Format the result
+if footer_found and footer_expected:
+    footer_results.append(
+        f"{footer_status} Footer: Expected '{footer_expected}', but found '{footer_found}' → {footer_reason}"
+    )
+elif footer_found:
+    footer_results.append(
+        f"{footer_status} Footer: Found '{footer_found}' → {footer_reason}"
+    )
+elif footer_expected:
+    footer_results.append(
+        f"{footer_status} Footer: Expected '{footer_expected}' → {footer_reason}"
+    )
+else:
+    footer_results.append(
+        f"{footer_status} Footer: No footer content found → {footer_reason}"
+    )
+
+
+
+===========
+
+
+import time
+
+# Placeholder for dynamic result rendering
+result_placeholder = st.empty()
+
+if validate_button and docx_file:
+    # Clear session state values
+    st.session_state["validation_result"] = None
+    st.session_state["validation_completed"] = False
+    st.session_state["export_clicked"] = False
+
+    # ⛔️ Clear results from previous validation
+    result_placeholder.empty()
+    validation_result = None
+    processed_data = None
+
+    with st.spinner("🔍 Validating document..."):
+        time.sleep(2)  # Simulate processing time
+
+        # Save file
+        docx_path = os.path.join("temp", docx_file.name)
+        with open(docx_path, "wb") as f:
+            f.write(docx_file.getbuffer())
+
+        # Validate
+        validation_result = validate_document(docx_path, CONFIG_FILE, SHEET_NAME)
+
+        if validation_result:
+            st.toast("✅ Validation Completed!")
+
+            # ⬇️ Render validation results inside placeholder
+            with result_placeholder.container():
+                st.write("### Validation Results:")
+                report_data = []
+
+                for section, results in validation_result.items():
+                    st.write(f"#### {section}:")
+                    if isinstance(results, list):
+                        for result in results:
+                            st.write(f"- {result}")
+                            report_data.append({"Section": section, "Result": result})
+                    else:
+                        st.write(f"- {results}")
+                        report_data.append({"Section": section, "Result": results})
+
+                # Excel download prep
+                report_df = pd.DataFrame(report_data)
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    report_df.to_excel(writer, index=False, sheet_name="Validation Report")
+                processed_data = output.getvalue()
+
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=processed_data,
+                    file_name="Validation_Report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            result_placeholder.warning("⚠️ No validation results found.")
